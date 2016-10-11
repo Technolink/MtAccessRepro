@@ -31,11 +31,6 @@ namespace MtAccessRepro
             using (var client = new HttpClient())
             {
                 var response = await client.GetAsync(url);
-                if (response.StatusCode != HttpStatusCode.Unauthorized)
-                {
-                    return null;
-                }
-
                 var authenticationParameters = await AuthenticationParameters.CreateFromUnauthorizedResponseAsync(response);
                 return authenticationParameters.Authority;
             }
