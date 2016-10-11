@@ -29,7 +29,7 @@ namespace MtAccessRepro
 
         private static async Task<string> GetAuthorityForSubscription(string subscriptionId)
         {
-            string url = $"{ManagementEndpoint}/subscriptions/{subscriptionId}?api-version=2014-04-01";
+            var url = $"{ManagementEndpoint}/subscriptions/{subscriptionId}?api-version=2014-04-01";
             using (var client = new HttpClient())
             {
                 var response = await client.GetAsync(url);
