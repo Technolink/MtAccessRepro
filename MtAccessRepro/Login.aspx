@@ -77,7 +77,8 @@
                 <option>Select a subscription to link</option>
             </select>
             <br/>
-            <input id="LinkButton" type="button" value="Link a subscription" OnServerClick="LinkButton_OnServerClick" runat="server"/>
+            <input id="LinkButton" type="button" value="Link the subscription" OnServerClick="LinkButton_OnServerClick" runat="server"/>
+            <input id="UnlinkButton" type="button" value="Unlink the subscription" OnServerClick="UnlinkButton_OnServerClick" runat="server"/>
             <br/>
             New role definition ID:
             <label id="DefinitionId" runat="server"></label>

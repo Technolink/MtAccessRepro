@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.UI;
@@ -22,7 +23,31 @@ namespace MtAccessRepro
         private const string CommonTenantId = "common";
         private const string ClientId = "...";
         private const string ClientSecret = "...";
-        private const string TenantId = "...";
+
+        private static async Task<string> GetDirectoryForSubscription(string subscriptionId)
+        {
+            string directoryId = null;
+
+            string url = string.Format("https://management.azure.com/subscriptions/{0}?api-version=2014-04-01", subscriptionId);
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "GET";
+            request.UserAgent = "http://www.vipswapper.com/cloudstack";
+            WebResponse response = null;
+            try
+            {
+                response = await request.GetResponseAsync();
+            }
+            catch (WebException ex)
+            {
+                if (ex.Response != null && ((HttpWebResponse)ex.Response).StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    string authUrl = ex.Response.Headers["WWW-Authenticate"].Split(',')[0].Split('=')[1];
+                    directoryId = authUrl.Substring(authUrl.LastIndexOf('/') + 1, 36);
+                }
+            }
+
+            return directoryId;
+        }
 
         private static async Task<AuthenticationResult> GetTokenFromAuthCodeAsync(string authCode, Uri replyUrl)
         {
@@ -60,7 +85,7 @@ namespace MtAccessRepro
             };
 
             // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
-            var appToken = await GetTokenForAppAsync(TenantId); // how do I get the resourceId here? This is the tenantId in the app's Azure subscription
+            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
             var jwtToken = new JwtSecurityToken(appToken.AccessToken);
             var principalId = jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
 
@@ -72,17 +97,38 @@ namespace MtAccessRepro
 
             var roleAssignmentId = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"; // Owner role. Todo, create a new role with precisely the permissions we require
 
-            var roleAssignmentName = Guid.NewGuid().ToString();
             var roleAssignment = await authorizationClient.RoleDefinitions.GetAsync($"/subscriptions/{subscriptionId}", roleAssignmentId);
-            var newAssignment = await authorizationClient.RoleAssignments.CreateAsync($"/subscriptions/{subscriptionId}", roleAssignmentName, new RoleAssignmentProperties
+            var newAssignment = await authorizationClient.RoleAssignments.CreateAsync($"/subscriptions/{subscriptionId}", Guid.NewGuid().ToString(), new RoleAssignmentProperties
             {
                 PrincipalId = principalId,
                 RoleDefinitionId = roleAssignment.Id
             });
-            return roleAssignmentName;
+            return newAssignment.Name;
         }
 
-        private string authCode, replyUrl;
+        private static async Task<string> RemoveRoleAssignmentAsync(AuthenticationResult token, string subscriptionId)
+        {
+            var authorizationClient = new AuthorizationManagementClient(new TokenCredentials(token.AccessToken))
+            {
+                SubscriptionId = subscriptionId
+            };
+
+            // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
+            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
+            var jwtToken = new JwtSecurityToken(appToken.AccessToken);
+            var principalId = jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+
+            var existingAssignments = await authorizationClient.RoleAssignments.ListAsync(new ODataQuery<RoleAssignmentFilter>(filter => filter.PrincipalId == principalId));
+            if (!existingAssignments.Any())
+            {
+                return "No existing role assignment";
+            }
+
+            var deletedAssignment = await authorizationClient.RoleAssignments.DeleteByIdAsync(existingAssignments.First().Id);
+            return deletedAssignment.Name;
+        }
+
+        private string _authCode, _replyUrl;
         protected void Page_Load(object sender, EventArgs e)
         {
             ClientIdLabel.InnerText = ClientId;
@@ -93,23 +139,19 @@ namespace MtAccessRepro
             }
 
             // Step 2: Get the AuthCode
-            authCode = queries["code"];
-            replyUrl = HttpContext.Current.Request.Url.GetLeftPart(UriPartial.Path);
+            _authCode = queries["code"];
+            _replyUrl = HttpContext.Current.Request.Url.GetLeftPart(UriPartial.Path);
 
             if (!IsPostBack)
             {
                 RegisterAsyncTask(new PageAsyncTask(PopulateSubscriptionsAsync));
-            }
-            if (SubscriptionsElement.SelectedIndex != 0)
-            {
-                RegisterAsyncTask(new PageAsyncTask(GetSubscriptionDisplayNameAsync));
             }
         }
 
         private async Task PopulateSubscriptionsAsync()
         {
             // Step 3: Get the bearer token
-            var token = await GetTokenFromAuthCodeAsync(authCode, new Uri(replyUrl));
+            var token = await GetTokenFromAuthCodeAsync(_authCode, new Uri(_replyUrl));
 
             // Step 4: Enumerate subscriptions
             var subscriptions = await GetSubscriptionIdsAsync(token);
@@ -122,28 +164,23 @@ namespace MtAccessRepro
         private async Task AddRoleAssignmentAsync()
         {
             var subscriptionId = SubscriptionsElement.Items[SubscriptionsElement.SelectedIndex].Text;
-            var token = await GetTokenFromAuthCodeAsync(authCode, new Uri(replyUrl));
+            var token = await GetTokenFromAuthCodeAsync(_authCode, new Uri(_replyUrl));
 
             // Step 5: Add a role assignment for our application in this subscriptions
             var roleDefinitionName = await AddRoleAssignmentAsync(token, subscriptionId);
             DefinitionId.InnerText = roleDefinitionName;
-        }
 
-        private async Task GetSubscriptionDisplayNameAsync()
-        {
-            var subscriptionId = SubscriptionsElement.Items[SubscriptionsElement.SelectedIndex].Text;
-            var appToken = await GetTokenForAppAsync(TenantId); // Question 6a: Not sure if TenantId is correct here
             string displayName;
+            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
             try
             {
-                // Step 6: Try to get some properties of the subscription
+                // Step 6: Try to get some properties of the subscription using the app only token
                 displayName = await GetSubscriptionDisplayNameAsync(appToken, subscriptionId);
             }
             catch
             {
                 displayName = "Could not get subscription name";
             }
-
             SubscriptionName.InnerText = displayName;
         }
 
@@ -155,6 +192,27 @@ namespace MtAccessRepro
             }
 
             RegisterAsyncTask(new PageAsyncTask(AddRoleAssignmentAsync));
+        }
+
+        private async Task RemoveRoleAssignmentAsync()
+        {
+            var subscriptionId = SubscriptionsElement.Items[SubscriptionsElement.SelectedIndex].Text;
+            var token = await GetTokenFromAuthCodeAsync(_authCode, new Uri(_replyUrl));
+
+            // Step 5: Add a role assignment for our application in this subscriptions
+            var roleDefinitionName = await RemoveRoleAssignmentAsync(token, subscriptionId);
+            DefinitionId.InnerText = "Removed " + roleDefinitionName;
+            SubscriptionName.InnerText = "no permission";
+        }
+
+        protected void UnlinkButton_OnServerClick(object sender, EventArgs e)
+        {
+            if (SubscriptionsElement.SelectedIndex == 0)
+            {
+                return; // default element selected
+            }
+
+            RegisterAsyncTask(new PageAsyncTask(RemoveRoleAssignmentAsync));
         }
     }
 }
