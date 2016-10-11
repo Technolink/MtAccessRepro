@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Web;
@@ -20,6 +19,8 @@ namespace MtAccessRepro
     public partial class Login : Page
     {
         private const string ManagementEndpoint = "https://management.azure.com/";
+        private const string GraphEndpointFormat = "https://login.microsoftonline.com/{0}/OAuth2/Token";
+        private const string GraphResource = "https://graph.windows.net";
         private const string AuthorityEndpoint = "https://login.windows.net/";
         private const string CommonTenantId = "common";
         private const string ClientId = "...";
@@ -36,6 +37,12 @@ namespace MtAccessRepro
             }
         }
 
+        private static async Task<string> GetDirectoryForSubscription(string subscriptionId)
+        {
+            var authority = new Uri(await GetAuthorityForSubscription(subscriptionId));
+            return authority.Segments.LastOrDefault();
+        }
+
         private static async Task<AuthenticationResult> GetTokenFromAuthCodeAsync(string authCode, Uri replyUrl)
         {
             var clientCredential = new ClientCredential(ClientId, ClientSecret);
@@ -48,6 +55,13 @@ namespace MtAccessRepro
             var clientCredential = new ClientCredential(ClientId, ClientSecret);
             var context = new AuthenticationContext(await GetAuthorityForSubscription(subscriptionId));
             return await context.AcquireTokenAsync(ManagementEndpoint, clientCredential);
+        }
+
+        private static async Task<AuthenticationResult> GetTokenForGraphAsync(string subscriptionId)
+        {
+            var clientCredential = new ClientCredential(ClientId, ClientSecret);
+            var context = new AuthenticationContext(string.Format(GraphEndpointFormat, await GetDirectoryForSubscription(subscriptionId)));
+            return await context.AcquireTokenAsync(GraphResource, clientCredential);
         }
 
         private static async Task<IEnumerable<string>> GetSubscriptionIdsAsync(AuthenticationResult token)
@@ -64,8 +78,17 @@ namespace MtAccessRepro
             return subscription.DisplayName;
         }
 
-        private static async Task<string> GetPrincipalId(AuthenticationResult token, string subscriptionId)
+        private static async Task<string> GetPrincipalIdProper(string subscriptionId)
         {
+            var token = await GetTokenForGraphAsync(subscriptionId);
+            
+            return "";
+        }
+
+        private static async Task<string> GetPrincipalId(string subscriptionId)
+        {
+            await GetPrincipalIdProper(subscriptionId);
+
             // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
             var appToken = await GetTokenForAppAsync(subscriptionId);
             var jwtToken = new JwtSecurityToken(appToken.AccessToken);
@@ -79,7 +102,7 @@ namespace MtAccessRepro
                 SubscriptionId = subscriptionId
             };
 
-            var principalId = await GetPrincipalId(token, subscriptionId);
+            var principalId = await GetPrincipalId(subscriptionId);
 
             var existingAssignments = await authorizationClient.RoleAssignments.ListAsync(new ODataQuery<RoleAssignmentFilter>(filter => filter.PrincipalId == principalId));
             if (existingAssignments.Any())
@@ -105,7 +128,7 @@ namespace MtAccessRepro
                 SubscriptionId = subscriptionId
             };
 
-            var principalId = await GetPrincipalId(token, subscriptionId);
+            var principalId = await GetPrincipalId(subscriptionId);
 
             var existingAssignments = await authorizationClient.RoleAssignments.ListAsync(new ODataQuery<RoleAssignmentFilter>(filter => filter.PrincipalId == principalId));
             if (!existingAssignments.Any())
