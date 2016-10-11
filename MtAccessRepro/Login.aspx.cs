@@ -163,15 +163,8 @@ namespace MtAccessRepro
             }).ToArray());
         }
 
-        private async Task AddRoleAssignmentAsync()
+        private async Task PopulateSubscriptionDisplayNameAsync(string subscriptionId)
         {
-            var subscriptionId = SubscriptionsElement.Items[SubscriptionsElement.SelectedIndex].Text;
-            var token = await GetTokenFromAuthCodeAsync(_authCode, new Uri(_replyUrl));
-
-            // Step 5: Add a role assignment for our application in this subscriptions
-            var roleDefinitionName = await AddRoleAssignmentAsync(token, subscriptionId);
-            DefinitionId.InnerText = roleDefinitionName;
-
             string displayName;
             var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
             try
@@ -184,6 +177,18 @@ namespace MtAccessRepro
                 displayName = "Could not get subscription name";
             }
             SubscriptionName.InnerText = displayName;
+        }
+
+        private async Task AddRoleAssignmentAsync()
+        {
+            var subscriptionId = SubscriptionsElement.Items[SubscriptionsElement.SelectedIndex].Text;
+            var token = await GetTokenFromAuthCodeAsync(_authCode, new Uri(_replyUrl));
+
+            // Step 5: Add a role assignment for our application in this subscriptions
+            var roleDefinitionName = await AddRoleAssignmentAsync(token, subscriptionId);
+            DefinitionId.InnerText = roleDefinitionName;
+
+            await PopulateSubscriptionDisplayNameAsync(subscriptionId);
         }
 
         protected void LinkButton_OnServerClick(object sender, EventArgs e)
@@ -204,7 +209,8 @@ namespace MtAccessRepro
             // Step 5: Add a role assignment for our application in this subscriptions
             var roleDefinitionName = await RemoveRoleAssignmentAsync(token, subscriptionId);
             DefinitionId.InnerText = "Removed " + roleDefinitionName;
-            SubscriptionName.InnerText = "no permission";
+
+            await PopulateSubscriptionDisplayNameAsync(subscriptionId);
         }
 
         protected void UnlinkButton_OnServerClick(object sender, EventArgs e)
