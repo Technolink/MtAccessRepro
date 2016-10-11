@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Web;
 using System.Web.UI;
 using System.Web.UI.WebControls;
+using Microsoft.Azure.ActiveDirectory.GraphClient;
 using Microsoft.Azure.Management.Authorization;
 using Microsoft.Azure.Management.Authorization.Models;
 using Microsoft.Azure.Management.ResourceManager;
@@ -19,8 +20,8 @@ namespace MtAccessRepro
     public partial class Login : Page
     {
         private const string ManagementEndpoint = "https://management.azure.com/";
-        private const string GraphEndpointFormat = "https://login.microsoftonline.com/{0}/OAuth2/Token";
-        private const string GraphResource = "https://graph.windows.net";
+        private const string GraphEndpointFormat = "https://login.microsoftonline.com/";
+        private const string GraphResource = "https://graph.windows.net/";
         private const string AuthorityEndpoint = "https://login.windows.net/";
         private const string CommonTenantId = "common";
         private const string ClientId = "...";
@@ -60,7 +61,7 @@ namespace MtAccessRepro
         private static async Task<AuthenticationResult> GetTokenForGraphAsync(string subscriptionId)
         {
             var clientCredential = new ClientCredential(ClientId, ClientSecret);
-            var context = new AuthenticationContext(string.Format(GraphEndpointFormat, await GetDirectoryForSubscription(subscriptionId)));
+            var context = new AuthenticationContext(GraphEndpointFormat + await GetDirectoryForSubscription(subscriptionId));
             return await context.AcquireTokenAsync(GraphResource, clientCredential);
         }
 
@@ -80,19 +81,28 @@ namespace MtAccessRepro
 
         private static async Task<string> GetPrincipalIdProper(string subscriptionId)
         {
-            var token = await GetTokenForGraphAsync(subscriptionId);
-            
-            return "";
+            //var token = await GetTokenForGraphAsync(subscriptionId);
+            var client = new ActiveDirectoryClient(new Uri(GraphResource + await GetDirectoryForSubscription(subscriptionId)),
+                async () => (await GetTokenForGraphAsync(subscriptionId)).AccessToken);
+            var principal = await client.ServicePrincipals.Where(service => service.AppId == ClientId).ExecuteSingleAsync();
+            return principal.ObjectId;
         }
 
         private static async Task<string> GetPrincipalId(string subscriptionId)
         {
-            await GetPrincipalIdProper(subscriptionId);
+            var properPrincipal = await GetPrincipalIdProper(subscriptionId);
 
             // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
             var appToken = await GetTokenForAppAsync(subscriptionId);
             var jwtToken = new JwtSecurityToken(appToken.AccessToken);
-            return jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+            var hackyPrincipal = jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+
+            if (properPrincipal != hackyPrincipal)
+            {
+                throw new Exception("Principals disagree!");
+            }
+
+            return properPrincipal;
         }
 
         private static async Task<string> AddRoleAssignmentAsync(AuthenticationResult token, string subscriptionId)
