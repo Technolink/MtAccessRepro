@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.UI;
@@ -24,29 +25,20 @@ namespace MtAccessRepro
         private const string ClientId = "...";
         private const string ClientSecret = "...";
 
-        private static async Task<string> GetDirectoryForSubscription(string subscriptionId)
+        private static async Task<string> GetAuthorityForSubscription(string subscriptionId)
         {
-            string directoryId = null;
-
-            string url = string.Format("https://management.azure.com/subscriptions/{0}?api-version=2014-04-01", subscriptionId);
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "GET";
-            request.UserAgent = "http://www.vipswapper.com/cloudstack";
-            WebResponse response = null;
-            try
+            string url = $"{ManagementEndpoint}/subscriptions/{subscriptionId}?api-version=2014-04-01";
+            using (var client = new HttpClient())
             {
-                response = await request.GetResponseAsync();
-            }
-            catch (WebException ex)
-            {
-                if (ex.Response != null && ((HttpWebResponse)ex.Response).StatusCode == HttpStatusCode.Unauthorized)
+                var response = await client.GetAsync(url);
+                if (response.StatusCode != HttpStatusCode.Unauthorized)
                 {
-                    string authUrl = ex.Response.Headers["WWW-Authenticate"].Split(',')[0].Split('=')[1];
-                    directoryId = authUrl.Substring(authUrl.LastIndexOf('/') + 1, 36);
+                    return null;
                 }
-            }
 
-            return directoryId;
+                var authenticationParameters = await AuthenticationParameters.CreateFromUnauthorizedResponseAsync(response);
+                return authenticationParameters.Authority;
+            }
         }
 
         private static async Task<AuthenticationResult> GetTokenFromAuthCodeAsync(string authCode, Uri replyUrl)
@@ -56,10 +48,10 @@ namespace MtAccessRepro
             return await context.AcquireTokenByAuthorizationCodeAsync(authCode, replyUrl, clientCredential, ManagementEndpoint);
         }
 
-        private static async Task<AuthenticationResult> GetTokenForAppAsync(string resourceId)
+        private static async Task<AuthenticationResult> GetTokenForAppAsync(string subscriptionId)
         {
             var clientCredential = new ClientCredential(ClientId, ClientSecret);
-            var context = new AuthenticationContext($"{AuthorityEndpoint}{resourceId}");
+            var context = new AuthenticationContext(await GetAuthorityForSubscription(subscriptionId));
             return await context.AcquireTokenAsync(ManagementEndpoint, clientCredential);
         }
 
@@ -80,7 +72,7 @@ namespace MtAccessRepro
         private static async Task<string> GetPrincipalId(AuthenticationResult token, string subscriptionId)
         {
             // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
-            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
+            var appToken = await GetTokenForAppAsync(subscriptionId);
             var jwtToken = new JwtSecurityToken(appToken.AccessToken);
             return jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
         }
@@ -166,7 +158,7 @@ namespace MtAccessRepro
         private async Task PopulateSubscriptionDisplayNameAsync(string subscriptionId)
         {
             string displayName;
-            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
+            var appToken = await GetTokenForAppAsync(subscriptionId);
             try
             {
                 // Step 6: Try to get some properties of the subscription using the app only token
