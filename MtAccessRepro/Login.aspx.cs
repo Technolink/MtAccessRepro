@@ -77,6 +77,14 @@ namespace MtAccessRepro
             return subscription.DisplayName;
         }
 
+        private static async Task<string> GetPrincipalId(AuthenticationResult token, string subscriptionId)
+        {
+            // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
+            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
+            var jwtToken = new JwtSecurityToken(appToken.AccessToken);
+            return jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+        }
+
         private static async Task<string> AddRoleAssignmentAsync(AuthenticationResult token, string subscriptionId)
         {
             var authorizationClient = new AuthorizationManagementClient(new TokenCredentials(token.AccessToken))
@@ -84,10 +92,7 @@ namespace MtAccessRepro
                 SubscriptionId = subscriptionId
             };
 
-            // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
-            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
-            var jwtToken = new JwtSecurityToken(appToken.AccessToken);
-            var principalId = jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+            var principalId = await GetPrincipalId(token, subscriptionId);
 
             var existingAssignments = await authorizationClient.RoleAssignments.ListAsync(new ODataQuery<RoleAssignmentFilter>(filter => filter.PrincipalId == principalId));
             if (existingAssignments.Any())
@@ -113,10 +118,7 @@ namespace MtAccessRepro
                 SubscriptionId = subscriptionId
             };
 
-            // Question 5a: How do you get the principal id? I'm pulling it from the app only bearer token now, no idea if that's correct
-            var appToken = await GetTokenForAppAsync(await GetDirectoryForSubscription(subscriptionId));
-            var jwtToken = new JwtSecurityToken(appToken.AccessToken);
-            var principalId = jwtToken.Claims.FirstOrDefault(claim => claim.Type == "oid")?.Value;
+            var principalId = await GetPrincipalId(token, subscriptionId);
 
             var existingAssignments = await authorizationClient.RoleAssignments.ListAsync(new ODataQuery<RoleAssignmentFilter>(filter => filter.PrincipalId == principalId));
             if (!existingAssignments.Any())
